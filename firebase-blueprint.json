@@ -1,0 +1,94 @@
+{
+  "entities": {
+    "users": {
+      "title": "Users",
+      "description": "User accounts and permissions",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "email": { "type": "string" },
+        "cpf": { "type": "string" },
+        "role": { "type": "string", "enum": ["Administrador", "Supervisor", "Limitado"] },
+        "status": { "type": "string", "enum": ["pending", "approved", "rejected"] },
+        "isPermanentAdmin": { "type": "boolean" },
+        "createdAt": { "type": "timestamp" },
+        "approvedAt": { "type": "timestamp" },
+        "approvedBy": { "type": "string" },
+        "authProvider": { "type": "string" }
+      },
+      "required": ["name", "email", "cpf", "role", "status"]
+    },
+    "collaborators": {
+      "title": "Collaborators",
+      "description": "HSE Evaluators / Collaborators list",
+      "properties": {
+        "id": { "type": "string" },
+        "fullName": { "type": "string" },
+        "specialty": { "type": "string" },
+        "active": { "type": "boolean" },
+        "createdAt": { "type": "timestamp" },
+        "createdBy": { "type": "string" }
+      },
+      "required": ["fullName", "active"]
+    },
+    "formFields": {
+      "title": "Form Fields",
+      "description": "Customizable questionnaire fields",
+      "properties": {
+        "id": { "type": "string" },
+        "section": { "type": "string" },
+        "order": { "type": "number" },
+        "label": { "type": "string" },
+        "type": { "type": "string" },
+        "required": { "type": "boolean" },
+        "helpText": { "type": "string" },
+        "options": { "type": "array" }
+      },
+      "required": ["section", "label", "type", "required"]
+    },
+    "records": {
+      "title": "Records",
+      "description": "Completed HSE medical and safety records",
+      "properties": {
+        "id": { "type": "string" },
+        "answers": { "type": "object" },
+        "collaboratorId": { "type": "string" },
+        "collaboratorNameSnapshot": { "type": "string" },
+        "status": { "type": "string" },
+        "startTime": { "type": "timestamp" },
+        "endTime": { "type": "timestamp" },
+        "durationMinutes": { "type": "number" },
+        "submittedBy": { "type": "string" },
+        "submittedByUid": { "type": "string" },
+        "createdAt": { "type": "timestamp" }
+      },
+      "required": ["answers", "collaboratorId", "status", "submittedBy"]
+    },
+    "drafts": {
+      "title": "Drafts",
+      "description": "Paused form drafts",
+      "properties": {
+        "id": { "type": "string" },
+        "ownerUid": { "type": "string" },
+        "answers": { "type": "object" },
+        "currentStep": { "type": "number" },
+        "driverNamePreview": { "type": "string" },
+        "pausedAt": { "type": "timestamp" },
+        "startedAt": { "type": "timestamp" }
+      },
+      "required": ["ownerUid", "answers"]
+    },
+    "auditLog": {
+      "title": "Audit Log",
+      "description": "Security and administrative audit trail",
+      "properties": {
+        "id": { "type": "string" },
+        "action": { "type": "string" },
+        "performedBy": { "type": "string" },
+        "timestamp": { "type": "timestamp" },
+        "details": { "type": "object" }
+      },
+      "required": ["action", "performedBy", "timestamp"]
+    }
+  }
+}
