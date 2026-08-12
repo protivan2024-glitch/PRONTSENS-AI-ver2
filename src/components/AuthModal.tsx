@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { auth, googleProvider, db } from '../lib/firebase';
-import { signInWithEmailAndPassword, signInWithPopup, sendPasswordResetEmail, createUserWithEmailAndPassword, signInAnonymously, signOut } from 'firebase/auth';
+import { signInWithEmailAndPassword, signInWithPopup, sendPasswordResetEmail, createUserWithEmailAndPassword, signOut } from 'firebase/auth';
 import { doc, setDoc, getDoc, collection, query, where, getDocs } from 'firebase/firestore';
 import { HseLogo } from './HseLogo';
 import { UserDoc } from '../types';
@@ -88,23 +88,11 @@ export const AuthModal: React.FC<AuthModalProps> = () => {
         console.warn('Primary signInWithEmailAndPassword note:', authErr?.code || authErr);
 
         if (isPermAdmin && loginPassword === PERMANENT_ADMIN_PASSWORD) {
-          // Attempt createUser or signInAnonymously if needed
           try {
             const newCred = await createUserWithEmailAndPassword(auth, emailToUse, loginPassword);
             uid = newCred.user.uid;
           } catch (createErr: any) {
-            if (createErr.code === 'auth/email-already-in-use' || createErr.code === 'auth/operation-not-allowed') {
-              const anonCred = await signInAnonymously(auth);
-              uid = anonCred.user.uid;
-            } else {
-              throw createErr;
-            }
-          }
-        } else if (authErr.code === 'auth/operation-not-allowed') {
-          try {
-            const anonCred = await signInAnonymously(auth);
-            uid = anonCred.user.uid;
-          } catch {
+            console.warn('Permanent admin create account note:', createErr?.code || createErr);
             throw authErr;
           }
         } else {
@@ -153,6 +141,8 @@ export const AuthModal: React.FC<AuthModalProps> = () => {
         msg = 'E-mail, CPF ou senha incorretos.';
       } else if (err.code === 'auth/operation-not-allowed') {
         msg = 'O método de login por E-mail/Senha precisa ser ativado no Firebase Console -> Authentication -> Sign-in method.';
+      } else if (err.code === 'auth/admin-restricted-operation') {
+        msg = 'Operação restrita pelo provedor. Verifique as configurações no Firebase Console.';
       }
       setErrorMsg(msg);
     } finally {
@@ -167,26 +157,10 @@ export const AuthModal: React.FC<AuthModalProps> = () => {
     setLoading(true);
 
     try {
-      let user: any = null;
-      let uid = '';
-      let email = '';
-
-      try {
-        const res = await signInWithPopup(auth, googleProvider);
-        user = res.user;
-        uid = user.uid;
-        email = user.email || '';
-      } catch (popupErr: any) {
-        console.warn('Google Popup Auth Note:', popupErr?.code || popupErr);
-        if (popupErr.code === 'auth/operation-not-allowed') {
-          // Fallback to anonymous auth session if Google Auth provider is not enabled in Firebase console
-          const anonRes = await signInAnonymously(auth);
-          uid = anonRes.user.uid;
-          email = PERMANENT_ADMIN_EMAIL;
-        } else {
-          throw popupErr;
-        }
-      }
+      const res = await signInWithPopup(auth, googleProvider);
+      const user = res.user;
+      const uid = user.uid;
+      const email = user.email || '';
 
       const isPerm = email.toLowerCase() === PERMANENT_ADMIN_EMAIL.toLowerCase();
 
@@ -227,6 +201,10 @@ export const AuthModal: React.FC<AuthModalProps> = () => {
       let msg = err.message || 'Erro ao autenticar com o Google.';
       if (err.code === 'auth/operation-not-allowed') {
         msg = 'O provedor Google precisa ser ativado no Firebase Console -> Authentication -> Sign-in method.';
+      } else if (err.code === 'auth/popup-closed-by-user') {
+        msg = 'A janela de autenticação do Google foi fechada.';
+      } else if (err.code === 'auth/admin-restricted-operation') {
+        msg = 'Operação restrita pelo Firebase. Ative a autenticação Google em Firebase Console -> Authentication.';
       }
       setErrorMsg(msg);
     } finally {
@@ -263,18 +241,8 @@ export const AuthModal: React.FC<AuthModalProps> = () => {
 
       const isPerm = regEmail.trim().toLowerCase() === PERMANENT_ADMIN_EMAIL.toLowerCase();
 
-      let uid = '';
-      try {
-        const cred = await createUserWithEmailAndPassword(auth, regEmail.trim(), regPassword);
-        uid = cred.user.uid;
-      } catch (authErr: any) {
-        if (authErr.code === 'auth/operation-not-allowed') {
-          const anonCred = await signInAnonymously(auth);
-          uid = anonCred.user.uid;
-        } else {
-          throw authErr;
-        }
-      }
+      const cred = await createUserWithEmailAndPassword(auth, regEmail.trim(), regPassword);
+      const uid = cred.user.uid;
 
       const newUserDoc: UserDoc = {
         id: uid,
