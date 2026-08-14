@@ -10,8 +10,15 @@ import { generateRecordPdf } from '../lib/pdfGenerator';
 import { exportRecordsToCsv } from '../lib/csvExporter';
 import { 
   Users, UserCheck, Shield, FormInput, FileText, Activity, Search, Trash2, 
-  Download, Eye, Plus, Edit2, RotateCcw, CheckCircle, XCircle, AlertTriangle, Key, X, Lock, KeyRound
+  Download, Eye, Plus, Edit2, RotateCcw, CheckCircle, XCircle, AlertTriangle, Key, X, Lock, KeyRound,
+  ImageIcon, HardDrive, Sparkles, RefreshCw
 } from 'lucide-react';
+import { 
+  getImageStorageStats, 
+  purgeImagesOlderThanCycle, 
+  purgeAllImagesFromSystem, 
+  ImageStats 
+} from '../lib/imagePurgeService';
 
 interface AdminPanelProps {
   currentUser: UserDoc;
@@ -62,7 +69,32 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ currentUser, onClose }) 
   const [newPasswordInput, setNewPasswordInput] = useState('');
   const [resetLoading, setResetLoading] = useState(false);
 
+  // Image storage & purge state
+  const [imageStats, setImageStats] = useState<ImageStats | null>(null);
+  const [purgingImages, setPurgingImages] = useState(false);
+
   const isAdmin = currentUser.role === 'Administrador';
+
+  // Load and refresh image stats
+  const refreshStorageStats = async () => {
+    try {
+      const stats = await getImageStorageStats();
+      setImageStats(stats);
+    } catch (err) {
+      console.warn('Error loading storage stats:', err);
+    }
+  };
+
+  useEffect(() => {
+    refreshStorageStats();
+    // Auto-run 29-day cycle cleanup check
+    purgeImagesOlderThanCycle(29).then(({ updatedCount }) => {
+      if (updatedCount > 0) {
+        console.log(`[Auto Purge] ${updatedCount} prontuários tiveram imagens com mais de 29 dias expurgadas.`);
+        refreshStorageStats();
+      }
+    }).catch(err => console.warn('Auto purge check:', err));
+  }, []);
 
   // Listeners
   useEffect(() => {
@@ -217,6 +249,51 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ currentUser, onClose }) 
       alert('Erro ao alterar senha: ' + (err.message || err));
     } finally {
       setResetLoading(false);
+    }
+  };
+
+  // Image Purging Handlers
+  const handlePurge29DaysCycle = async () => {
+    if (!isAdmin) return;
+    const confirmRun = window.confirm(
+      'Deseja executar o ciclo de expurgo de imagens com mais de 29 dias?\n\n' +
+      '• As fotos/evidências com mais de 29 dias serão removidas da nuvem para economia de espaço.\n' +
+      '• 100% dos prontuários, dados clínicos, respostas e histórico permanecerão totalmente preservados.'
+    );
+    if (!confirmRun) return;
+
+    setPurgingImages(true);
+    try {
+      const res = await purgeImagesOlderThanCycle(29);
+      alert(`Ciclo de 29 dias concluído com sucesso!\n${res.updatedCount} prontuário(s) tiveram suas fotos expurgadas, mantendo o histórico clínico intacto.`);
+      await refreshStorageStats();
+    } catch (err: any) {
+      console.error('Error purging 29 days images:', err);
+      alert('Erro ao executar expurgo: ' + (err.message || err));
+    } finally {
+      setPurgingImages(false);
+    }
+  };
+
+  const handlePurgeAllImages = async () => {
+    if (!isAdmin) return;
+    const word = prompt(
+      'ATENÇÃO: Deseja expurgar TODAS as imagens/evidências fotográficas anexadas no sistema para liberação imediata de espaço na nuvem?\n\n' +
+      'Todos os dados clínicos, cadastros, respostas, motoristas e relatórios permanecerão 100% intactos.\n\n' +
+      'Digite "EXPURGAR" para confirmar:'
+    );
+    if (word === 'EXPURGAR') {
+      setPurgingImages(true);
+      try {
+        const res = await purgeAllImagesFromSystem();
+        alert(`Expurgo concluído com sucesso!\n${res.updatedCount} prontuário(s) tiveram imagens removidas do armazenamento. O histórico de atendimentos foi totalmente preservado.`);
+        await refreshStorageStats();
+      } catch (err: any) {
+        console.error('Error purging all images:', err);
+        alert('Erro ao expurgar imagens: ' + (err.message || err));
+      } finally {
+        setPurgingImages(false);
+      }
     }
   };
 
@@ -436,6 +513,60 @@ STATUS GERAL DO SISTEMA: 100% OPERACIONAL E SINCRONIZADO
           {activeTab === 'records' && (
             <div className="space-y-4">
               
+              {/* Cloud Storage & Image Purge Control Banner */}
+              {isAdmin && (
+                <div className="bg-gradient-to-r from-gray-900 via-[#3F3F3F] to-gray-800 p-4 rounded-xl text-white shadow-md flex flex-wrap items-center justify-between gap-4 border border-gray-700">
+                  <div className="flex items-center gap-3">
+                    <div className="p-2.5 bg-white/10 rounded-xl">
+                      <HardDrive className="w-5 h-5 text-lime-400" />
+                    </div>
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <h4 className="font-bold text-xs text-white">Armazenamento & Imagens na Nuvem</h4>
+                        <span className="text-[10px] font-semibold bg-lime-400/20 text-lime-300 px-2 py-0.5 rounded-full">
+                          Ciclo de 29 Dias Ativo
+                        </span>
+                      </div>
+                      <p className="text-[11px] text-gray-300 mt-0.5">
+                        {imageStats 
+                          ? `${imageStats.recordsWithImages} prontuário(s) com fotos anexadas (${imageStats.recordsOlderThan29DaysWithImages} com mais de 29 dias)`
+                          : 'Calculando ocupação de imagens na nuvem...'}
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <button
+                      onClick={handlePurge29DaysCycle}
+                      disabled={purgingImages}
+                      className="px-3 py-1.5 bg-amber-500 hover:bg-amber-600 text-gray-900 font-bold text-xs rounded-lg transition-colors flex items-center gap-1.5 shadow-sm disabled:opacity-50"
+                      title="Remove imagens anexadas com mais de 29 dias mantendo 100% dos dados dos prontuários"
+                    >
+                      <Sparkles className="w-3.5 h-3.5" />
+                      Expurgar Imagens &gt; 29 Dias
+                    </button>
+
+                    <button
+                      onClick={handlePurgeAllImages}
+                      disabled={purgingImages}
+                      className="px-3 py-1.5 bg-red-600 hover:bg-red-700 text-white font-bold text-xs rounded-lg transition-colors flex items-center gap-1.5 shadow-sm disabled:opacity-50"
+                      title="Expurga todas as imagens do sistema para liberar espaço mantendo os prontuários intactos"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                      Expurgar Todas as Imagens
+                    </button>
+
+                    <button
+                      onClick={refreshStorageStats}
+                      className="p-1.5 text-gray-400 hover:text-white bg-white/5 hover:bg-white/10 rounded-lg transition-colors"
+                      title="Recarregar dados de armazenamento"
+                    >
+                      <RefreshCw className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                </div>
+              )}
+
               {/* Search & Export Toolbar */}
               <div className="flex flex-wrap items-center justify-between gap-3 bg-white p-3.5 rounded-xl border border-gray-200">
                 <div className="flex items-center gap-2 flex-1 min-w-[240px]">
@@ -1096,6 +1227,64 @@ STATUS GERAL DO SISTEMA: 100% OPERACIONAL E SINCRONIZADO
                   </pre>
                 )}
               </div>
+
+              {/* Cloud Storage & 29-Day Image Purge Card */}
+              {isAdmin && (
+                <div className="bg-white p-5 rounded-2xl border border-gray-200 shadow-sm space-y-4">
+                  <div className="flex items-center justify-between">
+                    <h3 className="font-bold text-sm text-gray-900 flex items-center gap-2">
+                      <HardDrive className="w-4 h-4 text-amber-600" />
+                      Gestão de Armazenamento na Nuvem & Ciclo de 29 Dias
+                    </h3>
+                    <span className="text-[11px] font-bold px-2.5 py-1 bg-lime-100 text-lime-800 rounded-full">
+                      Compressão &lt;100KB Ativa
+                    </span>
+                  </div>
+
+                  <p className="text-xs text-gray-600 leading-relaxed">
+                    Todas as fotos e evidências enviadas passam por compressão rigorosa (&lt;100KB). Para evitar acúmulo desnecessário de custos e espaço na nuvem, o sistema aplica a política de expurgo periódico:
+                  </p>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                    <div className="p-3 bg-gray-50 border border-gray-200 rounded-xl">
+                      <span className="text-[10px] text-gray-500 font-bold uppercase block">Total de Prontuários</span>
+                      <span className="text-base font-extrabold text-gray-900">{records.length}</span>
+                    </div>
+                    <div className="p-3 bg-gray-50 border border-gray-200 rounded-xl">
+                      <span className="text-[10px] text-gray-500 font-bold uppercase block">Prontuários c/ Imagens</span>
+                      <span className="text-base font-extrabold text-gray-900">{imageStats?.recordsWithImages ?? 0}</span>
+                    </div>
+                    <div className="p-3 bg-amber-50 border border-amber-200 rounded-xl">
+                      <span className="text-[10px] text-amber-700 font-bold uppercase block">Imagens &gt; 29 Dias</span>
+                      <span className="text-base font-extrabold text-amber-900">{imageStats?.recordsOlderThan29DaysWithImages ?? 0}</span>
+                    </div>
+                  </div>
+
+                  <div className="p-3 bg-blue-50 border border-blue-200 rounded-xl text-blue-900 text-xs">
+                    <strong>Garantia de Integridade de Dados:</strong> O expurgo de imagens remove estritamente os arquivos binários pesados de imagens da nuvem. Todos os prontuários, dados clínicos, respostas de formulário, nomes de motoristas, datas, horários e pareceres permanecem <strong>100% gravados e preservados no histórico</strong>.
+                  </div>
+
+                  <div className="flex gap-3 flex-wrap pt-2">
+                    <button
+                      onClick={handlePurge29DaysCycle}
+                      disabled={purgingImages}
+                      className="px-4 py-2 bg-amber-500 hover:bg-amber-600 text-gray-900 font-bold text-xs rounded-xl transition-colors flex items-center gap-2 shadow-sm disabled:opacity-50"
+                    >
+                      <Sparkles className="w-4 h-4" />
+                      Executar Ciclo de Expurgo (29 Dias)
+                    </button>
+
+                    <button
+                      onClick={handlePurgeAllImages}
+                      disabled={purgingImages}
+                      className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white font-bold text-xs rounded-xl transition-colors flex items-center gap-2 shadow-sm disabled:opacity-50"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                      Expurgar TODAS as Imagens do Sistema
+                    </button>
+                  </div>
+                </div>
+              )}
 
             </div>
           )}
