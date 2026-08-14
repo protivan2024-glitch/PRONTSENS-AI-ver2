@@ -27,15 +27,16 @@ export async function getImageStorageStats(): Promise<ImageStats> {
   recordsSnap.forEach((docSnap) => {
     totalRecords++;
     const data = docSnap.data() as RecordDoc;
-    const hasPhotosArray = Array.isArray(data.photos) && data.photos.length > 0;
+    const hasPhotosArray = Array.isArray(data.photos) && data.photos.some(p => p && p.url && (p.url.startsWith('data:image') || p.url.startsWith('http')));
     const hasPhotoInAnswers = Object.entries(data.answers || {}).some(([k, v]) => 
       (k.toLowerCase().includes('foto') || k.toLowerCase().includes('photo')) && 
-      typeof v === 'string' && v.startsWith('data:image') || (typeof v === 'string' && v.startsWith('http'))
+      typeof v === 'string' && 
+      (v.startsWith('data:image') || v.startsWith('http'))
     );
 
     if (hasPhotosArray || hasPhotoInAnswers) {
       recordsWithImages++;
-      const count = (data.photos?.length || 0) + (hasPhotoInAnswers ? 1 : 0);
+      const count = (hasPhotosArray ? data.photos.length : 0) + (hasPhotoInAnswers ? 1 : 0);
       totalImagesCount += count;
 
       const recordAge = now - (data.createdAt || now);

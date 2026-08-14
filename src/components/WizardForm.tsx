@@ -19,6 +19,8 @@ interface WizardFormProps {
   onOpenDraftsModal: () => void;
 }
 
+const LOCAL_DRAFT_KEY = 'prontosens_active_form_draft';
+
 export const WizardForm: React.FC<WizardFormProps> = ({
   fields,
   collaborators,
@@ -32,6 +34,7 @@ export const WizardForm: React.FC<WizardFormProps> = ({
   const [currentStep, setCurrentStep] = useState<number>(1);
   const [answers, setAnswers] = useState<Record<string, any>>({});
   const [photoUrls, setPhotoUrls] = useState<Record<string, string>>({});
+  const [hasRestoredLocalCache, setHasRestoredLocalCache] = useState(false);
 
   // Medication modal state
   const [showMedicationModal, setShowMedicationModal] = useState(false);
@@ -42,7 +45,7 @@ export const WizardForm: React.FC<WizardFormProps> = ({
   const [pausing, setPausing] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
-  // Initialize or restore draft
+  // Initialize or restore draft (from cloud activeDraft or from localStorage)
   useEffect(() => {
     if (activeDraft) {
       setAnswers(activeDraft.answers || {});
@@ -59,7 +62,25 @@ export const WizardForm: React.FC<WizardFormProps> = ({
         setMedicationName(String(activeDraft.answers['f_medicamento_nome']));
       }
     } else {
-      // Set initial defaults
+      // Check if there is a cached unsubmitted session in localStorage to recover from memory crash
+      try {
+        const cachedRaw = localStorage.getItem(LOCAL_DRAFT_KEY);
+        if (cachedRaw) {
+          const cached = JSON.parse(cachedRaw);
+          if (cached && cached.answers && Object.keys(cached.answers).length > 0) {
+            setAnswers(cached.answers);
+            setCurrentStep(cached.currentStep || 1);
+            setPhotoUrls(cached.photoUrls || {});
+            if (cached.medicationName) setMedicationName(cached.medicationName);
+            setHasRestoredLocalCache(true);
+            return;
+          }
+        }
+      } catch (e) {
+        console.warn('Failed to read local draft cache:', e);
+      }
+
+      // Set initial defaults if clean start
       const now = new Date();
       const dateFormatted = now.toISOString().slice(0, 10);
       const timeFormatted = now.toTimeString().slice(0, 5);
@@ -73,6 +94,23 @@ export const WizardForm: React.FC<WizardFormProps> = ({
       }));
     }
   }, [activeDraft]);
+
+  // Persist form state automatically into local cache so it survives accidental refresh / memory kill
+  useEffect(() => {
+    if (Object.keys(answers).length > 0) {
+      try {
+        localStorage.setItem(LOCAL_DRAFT_KEY, JSON.stringify({
+          answers,
+          photoUrls,
+          currentStep,
+          medicationName,
+          updatedAt: Date.now()
+        }));
+      } catch (e) {
+        // LocalStorage quota safety
+      }
+    }
+  }, [answers, photoUrls, currentStep, medicationName]);
 
   // Handle field change helper
   const updateAnswer = (fieldId: string, value: any) => {
@@ -341,19 +379,23 @@ export const WizardForm: React.FC<WizardFormProps> = ({
   // Clear current form
   const handleClearForm = () => {
     if (confirm('Deseja realmente limpar todos os campos deste formulário?')) {
+      localStorage.removeItem(LOCAL_DRAFT_KEY);
       setAnswers({});
       setPhotoUrls({});
       setCurrentStep(1);
       setErrorMsg(null);
+      setHasRestoredLocalCache(false);
     }
   };
 
   // New Blank Form
   const handleNewBlankForm = () => {
+    localStorage.removeItem(LOCAL_DRAFT_KEY);
     setAnswers({});
     setPhotoUrls({});
     setCurrentStep(1);
     setErrorMsg(null);
+    setHasRestoredLocalCache(false);
     onClearDraftContext();
   };
 
@@ -419,6 +461,9 @@ export const WizardForm: React.FC<WizardFormProps> = ({
 
       await addDoc(collection(db, 'records'), newRecordDoc);
 
+      // Clear local storage cache
+      localStorage.removeItem(LOCAL_DRAFT_KEY);
+
       // If came from a draft, delete draft
       if (activeDraft?.id) {
         await deleteDoc(doc(db, 'drafts', activeDraft.id));
@@ -441,6 +486,23 @@ export const WizardForm: React.FC<WizardFormProps> = ({
   return (
     <div className="max-w-4xl mx-auto px-4 py-6">
       
+      {/* Restored Cache Alert Banner */}
+      {hasRestoredLocalCache && !activeDraft && (
+        <div className="mb-4 p-3 bg-blue-50 border border-blue-200 rounded-2xl flex items-center justify-between gap-3 text-xs text-blue-900 shadow-sm animate-fadeIn">
+          <div className="flex items-center gap-2 font-medium">
+            <CheckCircle className="w-4 h-4 text-blue-600 shrink-0" />
+            <span>Rascunho em andamento restaurado automaticamente da sessão anterior (proteção anti-perda).</span>
+          </div>
+          <button
+            type="button"
+            onClick={handleNewBlankForm}
+            className="px-2.5 py-1 bg-white border border-blue-300 hover:bg-blue-100 text-blue-800 font-bold rounded-lg text-[11px] shrink-0"
+          >
+            Iniciar do Zero
+          </button>
+        </div>
+      )}
+
       {/* Top Wizard Steps Bar */}
       <div className="bg-white rounded-2xl p-4 shadow-sm border border-gray-200 mb-6">
         <div className="grid grid-cols-4 gap-2 text-center">
@@ -1151,6 +1213,14 @@ export const WizardForm: React.FC<WizardFormProps> = ({
                   </span>
                 </label>
               </div>
+
+              {/* Mandatory Photo Notice if Missing */}
+              {!(photoUrls['f_foto_reflexo'] || answers['f_foto_reflexo']) && (
+                <div className="p-3.5 bg-amber-50 border border-amber-300 rounded-xl flex items-center gap-2.5 text-xs text-amber-900 font-semibold">
+                  <AlertCircle className="w-5 h-5 text-amber-600 shrink-0" />
+                  <span>A foto do teste de reflexo do motorista é <strong>obrigatória</strong>. Por favor, capture ou anexe a foto no item 18 acima antes de enviar o prontuário.</span>
+                </div>
+              )}
 
             </div>
           )}
