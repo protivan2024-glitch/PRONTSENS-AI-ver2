@@ -11,7 +11,7 @@ import { exportRecordsToCsv } from '../lib/csvExporter';
 import { 
   Users, UserCheck, Shield, FormInput, FileText, Activity, Search, Trash2, 
   Download, Eye, Plus, Edit2, RotateCcw, CheckCircle, XCircle, AlertTriangle, Key, X, Lock, KeyRound,
-  ImageIcon, HardDrive, Sparkles, RefreshCw
+  ImageIcon, HardDrive, Sparkles, RefreshCw, Camera
 } from 'lucide-react';
 import { 
   getImageStorageStats, 
@@ -1329,21 +1329,67 @@ STATUS GERAL DO SISTEMA: 100% OPERACIONAL E SINCRONIZADO
               })}
             </div>
 
-            {selectedRecord.photos && selectedRecord.photos.length > 0 && (
-              <div className="space-y-2 border-t pt-3">
-                <h4 className="font-bold text-xs text-gray-700 uppercase tracking-wider">
-                  Evidências Fotográficas Registradas
-                </h4>
-                <div className="grid grid-cols-2 gap-3">
-                  {selectedRecord.photos.map((p, idx) => (
-                    <div key={idx} className="rounded-xl overflow-hidden border">
-                      <img src={p.url} alt="Evidência" className="w-full h-40 object-cover" />
-                      <p className="p-2 text-[10px] text-gray-500">{p.caption}</p>
-                    </div>
-                  ))}
+            {/* Evidências Fotográficas */}
+            {(() => {
+              const displayPhotos: { url: string; caption?: string }[] = [];
+              if (selectedRecord.photos && selectedRecord.photos.length > 0) {
+                selectedRecord.photos.forEach(p => {
+                  if (p.url) displayPhotos.push(p);
+                });
+              }
+              const ansPhoto = selectedRecord.answers['f_foto_reflexo'];
+              if (typeof ansPhoto === 'string' && ansPhoto && !displayPhotos.some(p => p.url === ansPhoto)) {
+                displayPhotos.push({
+                  url: ansPhoto,
+                  caption: 'Foto do teste de reflexo do motorista'
+                });
+              }
+
+              if (displayPhotos.length === 0) {
+                return (
+                  <div className="p-3 bg-gray-50 border border-gray-200 rounded-xl text-gray-500 text-xs flex items-center gap-2">
+                    <Camera className="w-4 h-4 text-gray-400" />
+                    <span>Nenhuma evidência fotográfica anexada (ou imagem expurgada pelo ciclo de 29 dias).</span>
+                  </div>
+                );
+              }
+
+              return (
+                <div className="space-y-2 border-t pt-3">
+                  <h4 className="font-bold text-xs text-gray-700 uppercase tracking-wider flex items-center justify-between">
+                    <span>Evidências Fotográficas Registradas</span>
+                    <span className="text-[10px] text-emerald-600 font-semibold bg-emerald-50 px-2 py-0.5 rounded-full">
+                      {displayPhotos.length} foto(s) anexada(s)
+                    </span>
+                  </h4>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    {displayPhotos.map((p, idx) => (
+                      <div key={idx} className="rounded-xl overflow-hidden border border-gray-200 bg-gray-50 shadow-sm">
+                        <img 
+                          src={p.url} 
+                          alt="Evidência" 
+                          className="w-full h-48 object-cover cursor-pointer hover:opacity-95" 
+                          onClick={() => window.open(p.url, '_blank')}
+                          title="Clique para visualizar imagem"
+                        />
+                        <div className="p-2.5 flex items-center justify-between bg-white border-t">
+                          <p className="text-[11px] font-bold text-gray-700">{p.caption || 'Foto do Teste de Reflexo'}</p>
+                          <a
+                            href={p.url}
+                            download={`foto_reflexo_${selectedRecord.id}.jpg`}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="text-[10px] font-bold text-blue-600 hover:text-blue-800"
+                          >
+                            Abrir / Baixar
+                          </a>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
                 </div>
-              </div>
-            )}
+              );
+            })()}
 
             <div className="text-right border-t pt-3">
               <button

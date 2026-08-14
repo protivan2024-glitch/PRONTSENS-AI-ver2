@@ -178,7 +178,7 @@ export const DEFAULT_HSE_FIELDS: FormField[] = [
     order: 18,
     label: 'Foto do teste de reflexo',
     type: 'photo',
-    required: false
+    required: true
   },
   {
     id: 'f_time_end',

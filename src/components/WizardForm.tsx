@@ -51,6 +51,9 @@ export const WizardForm: React.FC<WizardFormProps> = ({
       (activeDraft.photoRefs || []).forEach(p => {
         photoMap[p.fieldId] = p.storagePathOrUrl;
       });
+      if (activeDraft.answers && activeDraft.answers['f_foto_reflexo']) {
+        photoMap['f_foto_reflexo'] = String(activeDraft.answers['f_foto_reflexo']);
+      }
       setPhotoUrls(photoMap);
       if (activeDraft.answers['f_medicamento_nome']) {
         setMedicationName(String(activeDraft.answers['f_medicamento_nome']));
@@ -250,6 +253,11 @@ export const WizardForm: React.FC<WizardFormProps> = ({
     }
 
     if (step === 4) {
+      const reflexoPhoto = photoUrls['f_foto_reflexo'] || answers['f_foto_reflexo'];
+      if (!reflexoPhoto) {
+        setErrorMsg('A foto do teste de reflexo do motorista é obrigatória para finalizar o prontuário.');
+        return false;
+      }
       if (!answers['f_time_end']) {
         setErrorMsg('Informe o Horário final do atendimento.');
         return false;
@@ -283,13 +291,30 @@ export const WizardForm: React.FC<WizardFormProps> = ({
   const handlePauseDraft = async () => {
     setPausing(true);
     try {
-      const draftData: Partial<DraftDoc> = {
-        ownerUid: currentUserUid,
-        answers: answers,
-        photoRefs: Object.entries(photoUrls).map(([fieldId, storagePathOrUrl]) => ({
+      const reflexoPhoto = photoUrls['f_foto_reflexo'] || answers['f_foto_reflexo'] || '';
+      const updatedAnswers = {
+        ...answers,
+        f_foto_reflexo: reflexoPhoto
+      };
+
+      const photoRefsArray = Object.entries(photoUrls)
+        .filter(([_, url]) => !!url)
+        .map(([fieldId, storagePathOrUrl]) => ({
           fieldId,
           storagePathOrUrl: String(storagePathOrUrl)
-        })),
+        }));
+
+      if (reflexoPhoto && !photoRefsArray.some(p => p.fieldId === 'f_foto_reflexo')) {
+        photoRefsArray.push({
+          fieldId: 'f_foto_reflexo',
+          storagePathOrUrl: reflexoPhoto
+        });
+      }
+
+      const draftData: Partial<DraftDoc> = {
+        ownerUid: currentUserUid,
+        answers: updatedAnswers,
+        photoRefs: photoRefsArray,
         currentStep: currentStep,
         driverNamePreview: answers['f_motorista'] || 'Motorista em Atendimento',
         pausedAt: Date.now(),
@@ -355,15 +380,31 @@ export const WizardForm: React.FC<WizardFormProps> = ({
         hseStatus = 'Alerta';
       }
 
-      // Photos array
-      const photosArray = Object.entries(photoUrls).map(([fieldId, url]) => ({
-        fieldId,
-        url: String(url),
-        caption: 'Foto do teste de reflexo'
-      }));
+      // Photos array and answers sync
+      const reflexoPhoto = photoUrls['f_foto_reflexo'] || answers['f_foto_reflexo'] || '';
+      const finalAnswers = {
+        ...answers,
+        f_foto_reflexo: reflexoPhoto
+      };
+
+      const photosArray = Object.entries(photoUrls)
+        .filter(([_, url]) => !!url)
+        .map(([fieldId, url]) => ({
+          fieldId,
+          url: String(url),
+          caption: 'Foto do teste de reflexo'
+        }));
+
+      if (reflexoPhoto && !photosArray.some(p => p.fieldId === 'f_foto_reflexo')) {
+        photosArray.push({
+          fieldId: 'f_foto_reflexo',
+          url: String(reflexoPhoto),
+          caption: 'Foto do teste de reflexo'
+        });
+      }
 
       const newRecordDoc: Partial<RecordDoc> = {
-        answers: answers,
+        answers: finalAnswers,
         photos: photosArray,
         collaboratorId: collabId,
         collaboratorNameSnapshot: collabNameSnapshot,
@@ -1034,15 +1075,22 @@ export const WizardForm: React.FC<WizardFormProps> = ({
               
               {/* 18. Foto do Teste de Reflexo */}
               <PhotoCapture
-                label="18. Foto do teste de reflexo (Evidência)"
+                label="18. Foto do teste de reflexo do motorista (Evidência)"
                 fieldId="f_foto_reflexo"
-                currentUrl={photoUrls['f_foto_reflexo']}
-                onPhotoSelected={(fid, url) => setPhotoUrls(prev => ({ ...prev, [fid]: url }))}
-                onPhotoRemoved={(fid) => setPhotoUrls(prev => {
-                  const copy = { ...prev };
-                  delete copy[fid];
-                  return copy;
-                })}
+                required={true}
+                currentUrl={photoUrls['f_foto_reflexo'] || answers['f_foto_reflexo']}
+                onPhotoSelected={(fid, url) => {
+                  setPhotoUrls(prev => ({ ...prev, [fid]: url }));
+                  updateAnswer(fid, url);
+                }}
+                onPhotoRemoved={(fid) => {
+                  setPhotoUrls(prev => {
+                    const copy = { ...prev };
+                    delete copy[fid];
+                    return copy;
+                  });
+                  updateAnswer(fid, '');
+                }}
               />
 
               {/* 19. Horário Final do Atendimento */}
