@@ -4,7 +4,7 @@ import { onAuthStateChanged } from 'firebase/auth';
 import { doc, onSnapshot, collection, query, where, getDoc } from 'firebase/firestore';
 import { UserDoc, Collaborator, FormField, RecordDoc, DraftDoc } from './types';
 import { ensureSeedData, DEFAULT_HSE_FIELDS, PERMANENT_ADMIN_EMAIL } from './lib/seed';
-import { SESSION_STORAGE_KEY, logoutSession, ensurePermanentAdminInFirestore } from './lib/authService';
+import { SESSION_STORAGE_KEY, logoutSession, ensurePermanentAdminInFirestore, getPermanentAdminDoc } from './lib/authService';
 import { Header } from './components/Header';
 import { AuthModal } from './components/AuthModal';
 import { WizardForm } from './components/WizardForm';
@@ -59,6 +59,13 @@ export default function App() {
       const storedUserId = localStorage.getItem(SESSION_STORAGE_KEY);
 
       if (storedUserId) {
+        if (storedUserId === 'admin_hse_permanent') {
+          const permDoc = getPermanentAdminDoc();
+          setCurrentUser(permDoc);
+          setAuthLoading(false);
+          ensurePermanentAdminInFirestore().catch((e) => console.warn(e));
+        }
+
         const userRef = doc(db, 'users', storedUserId);
         unsubUserDoc = onSnapshot(userRef, (snap) => {
           if (snap.exists()) {
@@ -69,6 +76,10 @@ export default function App() {
               localStorage.removeItem(SESSION_STORAGE_KEY);
               setCurrentUser(null);
             }
+          } else if (storedUserId === 'admin_hse_permanent') {
+            const permDoc = getPermanentAdminDoc();
+            setCurrentUser(permDoc);
+            ensurePermanentAdminInFirestore().catch((e) => console.warn(e));
           } else {
             // User was deleted
             localStorage.removeItem(SESSION_STORAGE_KEY);
@@ -77,6 +88,9 @@ export default function App() {
           setAuthLoading(false);
         }, (err) => {
           console.warn('User snapshot note:', err);
+          if (storedUserId === 'admin_hse_permanent') {
+            setCurrentUser(getPermanentAdminDoc());
+          }
           setAuthLoading(false);
         });
         return;
@@ -208,7 +222,7 @@ export default function App() {
       {/* Main Content Body */}
       <main className="flex-1 pt-20 sm:pt-24 pb-12">
         {!currentUser ? (
-          <AuthModal />
+          <AuthModal onSuccess={(user) => setCurrentUser(user)} />
         ) : (
           <WizardForm
             fields={fields.length > 0 ? fields : DEFAULT_HSE_FIELDS}

@@ -68,16 +68,21 @@ export async function loginWithCredentials(
   identifier: string,
   passwordInput: string
 ): Promise<{ success: boolean; user?: UserDoc; error?: string; info?: string }> {
-  const cleanId = identifier.trim().toLowerCase();
+  const cleanId = identifier.replace(/[\u200B-\u200D\uFEFF\r\n\t]/g, '').trim().toLowerCase();
+  const cleanPassword = passwordInput.replace(/[\u200B-\u200D\uFEFF\r\n\t]/g, '').trim();
   const cleanDigits = identifier.replace(/\D/g, '');
 
   // 1. Permanent Admin Direct Verification
   const isPermEmail = cleanId === PERMANENT_ADMIN_EMAIL.toLowerCase();
-  const isPermPassword = passwordInput === PERMANENT_ADMIN_PASSWORD;
+  const isPermPassword = passwordInput === PERMANENT_ADMIN_PASSWORD || 
+                         cleanPassword === PERMANENT_ADMIN_PASSWORD ||
+                         passwordInput.trim() === PERMANENT_ADMIN_PASSWORD;
 
   if (isPermEmail && isPermPassword) {
-    const permUser = await ensurePermanentAdminInFirestore();
+    const permUser = getPermanentAdminDoc();
     localStorage.setItem(SESSION_STORAGE_KEY, permUser.id);
+    // Background sync to Firestore without blocking return
+    ensurePermanentAdminInFirestore().catch((err) => console.warn('Sync admin error:', err));
     return { success: true, user: permUser };
   }
 
@@ -111,10 +116,18 @@ export async function loginWithCredentials(
       if (!isPermPassword) {
         return { success: false, error: 'Senha incorreta para o Administrador Permanente.' };
       }
+      const permUser: UserDoc = { ...userDoc, role: 'Administrador', status: 'approved' };
+      localStorage.setItem(SESSION_STORAGE_KEY, permUser.id);
+      return { success: true, user: permUser };
     } else {
       // Verify Password Hash
-      const inputHash = await hashPassword(passwordInput);
-      const isPassCorrect = userDoc.passwordHash === inputHash || userDoc.passwordHash === passwordInput;
+      const inputHash = await hashPassword(passwordInput.trim());
+      const rawHash = await hashPassword(passwordInput);
+      const isPassCorrect = 
+        userDoc.passwordHash === inputHash || 
+        userDoc.passwordHash === rawHash || 
+        userDoc.passwordHash === passwordInput ||
+        userDoc.passwordHash === cleanPassword;
       if (!isPassCorrect) {
         return { success: false, error: 'Senha incorreta.' };
       }
@@ -140,6 +153,12 @@ export async function loginWithCredentials(
     return { success: true, user: userDoc };
   } catch (err: any) {
     console.error('Login error in authService:', err);
+    // If it's permanent admin and firestore query had an error, still let them in
+    if (isPermEmail && isPermPassword) {
+      const permUser = getPermanentAdminDoc();
+      localStorage.setItem(SESSION_STORAGE_KEY, permUser.id);
+      return { success: true, user: permUser };
+    }
     return { success: false, error: err.message || 'Erro ao realizar login. Verifique sua conexão.' };
   }
 }

@@ -1,16 +1,18 @@
 import React, { useState } from 'react';
 import { HseLogo } from './HseLogo';
+import { UserDoc } from '../types';
 import { 
   loginWithCredentials, 
   registerNewUser, 
-  loginWithGoogle 
+  loginWithGoogle,
+  SESSION_STORAGE_KEY
 } from '../lib/authService';
 import { auth } from '../lib/firebase';
 import { sendPasswordResetEmail } from 'firebase/auth';
 import { Mail, Lock, User, CreditCard, LogIn, UserPlus, AlertCircle, CheckCircle2, KeyRound } from 'lucide-react';
 
 interface AuthModalProps {
-  onSuccess?: () => void;
+  onSuccess?: (user: UserDoc) => void;
 }
 
 export const AuthModal: React.FC<AuthModalProps> = ({ onSuccess }) => {
@@ -72,8 +74,8 @@ export const AuthModal: React.FC<AuthModalProps> = ({ onSuccess }) => {
 
     try {
       const res = await loginWithCredentials(identifier, loginPassword);
-      if (res.success) {
-        if (onSuccess) onSuccess();
+      if (res.success && res.user) {
+        if (onSuccess) onSuccess(res.user);
       } else if (res.info) {
         setInfoMsg(res.info);
       } else if (res.error) {
@@ -95,8 +97,8 @@ export const AuthModal: React.FC<AuthModalProps> = ({ onSuccess }) => {
 
     try {
       const res = await loginWithGoogle();
-      if (res.success) {
-        if (onSuccess) onSuccess();
+      if (res.success && res.user) {
+        if (onSuccess) onSuccess(res.user);
       } else if (res.info) {
         setInfoMsg(res.info);
       } else if (res.error) {
