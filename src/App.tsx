@@ -1,15 +1,16 @@
 import React, { useState, useEffect } from 'react';
-import { auth, db } from './lib/firebase';
-import { onAuthStateChanged, signOut } from 'firebase/auth';
-import { doc, onSnapshot, collection, query, where, getDocs } from 'firebase/firestore';
+import { db, auth } from './lib/firebase';
+import { onAuthStateChanged } from 'firebase/auth';
+import { doc, onSnapshot, collection, query, where, getDoc } from 'firebase/firestore';
 import { UserDoc, Collaborator, FormField, RecordDoc, DraftDoc } from './types';
 import { ensureSeedData, DEFAULT_HSE_FIELDS, PERMANENT_ADMIN_EMAIL } from './lib/seed';
+import { SESSION_STORAGE_KEY, logoutSession, ensurePermanentAdminInFirestore } from './lib/authService';
 import { Header } from './components/Header';
 import { AuthModal } from './components/AuthModal';
 import { WizardForm } from './components/WizardForm';
 import { DraftsModal } from './components/DraftsModal';
 import { AdminPanel } from './components/AdminPanel';
-import { AlertTriangle, WifiOff, Loader2 } from 'lucide-react';
+import { WifiOff, Loader2 } from 'lucide-react';
 
 export default function App() {
   const [currentUser, setCurrentUser] = useState<UserDoc | null>(null);
@@ -45,90 +46,111 @@ export default function App() {
     };
   }, []);
 
+  // Initial Seed & Auth state listener
+  useEffect(() => {
+    ensureSeedData();
+  }, []);
+
   // Realtime Auth State & Single Source of Truth Profile Listener
   useEffect(() => {
     let unsubUserDoc: (() => void) | null = null;
 
-    const unsubAuth = onAuthStateChanged(auth, (firebaseUser) => {
-      if (unsubUserDoc) {
-        unsubUserDoc();
-        unsubUserDoc = null;
-      }
+    const checkSession = async () => {
+      const storedUserId = localStorage.getItem(SESSION_STORAGE_KEY);
 
-      if (!firebaseUser) {
-        setCurrentUser(null);
-        setAuthLoading(false);
+      if (storedUserId) {
+        const userRef = doc(db, 'users', storedUserId);
+        unsubUserDoc = onSnapshot(userRef, (snap) => {
+          if (snap.exists()) {
+            const userData = { id: snap.id, ...snap.data() } as UserDoc;
+            if (userData.status === 'approved') {
+              setCurrentUser(userData);
+            } else {
+              localStorage.removeItem(SESSION_STORAGE_KEY);
+              setCurrentUser(null);
+            }
+          } else {
+            // User was deleted
+            localStorage.removeItem(SESSION_STORAGE_KEY);
+            setCurrentUser(null);
+          }
+          setAuthLoading(false);
+        }, (err) => {
+          console.warn('User snapshot note:', err);
+          setAuthLoading(false);
+        });
         return;
       }
 
-      // Realtime listener on user profile doc for immediate revocation check
-      const userRef = doc(db, 'users', firebaseUser.uid);
-      unsubUserDoc = onSnapshot(userRef, (docSnap) => {
-        if (!docSnap.exists()) {
-          // Profile deleted -> force logout
-          signOut(auth);
-          setCurrentUser(null);
-          setAuthLoading(false);
+      // Check Firebase Auth as fallback or companion
+      const unsubAuth = onAuthStateChanged(auth, async (firebaseUser) => {
+        if (!firebaseUser) {
+          if (!localStorage.getItem(SESSION_STORAGE_KEY)) {
+            setCurrentUser(null);
+            setAuthLoading(false);
+          }
           return;
         }
 
-        const userData = { id: docSnap.id, ...docSnap.data() } as UserDoc;
-        
-        if (userData.status !== 'approved') {
-          // Status revoked or pending -> force logout
-          signOut(auth);
-          setCurrentUser(null);
-        } else {
-          setCurrentUser(userData);
-        }
-        setAuthLoading(false);
-      }, (err) => {
-        console.error('User doc listener error:', err);
-        setAuthLoading(false);
+        const userRef = doc(db, 'users', firebaseUser.uid);
+        unsubUserDoc = onSnapshot(userRef, (docSnap) => {
+          if (docSnap.exists()) {
+            const userData = { id: docSnap.id, ...docSnap.data() } as UserDoc;
+            if (userData.status === 'approved') {
+              localStorage.setItem(SESSION_STORAGE_KEY, userData.id);
+              setCurrentUser(userData);
+            } else {
+              setCurrentUser(null);
+            }
+          }
+          setAuthLoading(false);
+        }, (err) => {
+          console.warn('Firebase user snapshot note:', err);
+          setAuthLoading(false);
+        });
       });
-    });
+
+      return () => unsubAuth();
+    };
+
+    checkSession();
 
     return () => {
-      unsubAuth();
       if (unsubUserDoc) unsubUserDoc();
     };
   }, []);
 
   // Listen to application collections once user is authenticated
   useEffect(() => {
-    if (!currentUser) return;
-
-    if (currentUser.status === 'approved') {
-      ensureSeedData();
-    }
+    if (!currentUser || currentUser.status !== 'approved') return;
 
     // 1. Collaborators listener
     const qCollab = query(collection(db, 'collaborators'));
     const unsubCollab = onSnapshot(qCollab, (snap) => {
       const docs = snap.docs.map(d => ({ id: d.id, ...d.data() } as Collaborator));
       setCollaborators(docs);
-    }, (err) => console.warn('Collaborators listener error:', err));
+    }, (err) => console.warn('Collaborators listener note:', err));
 
     // 2. Form Fields listener
     const qFields = query(collection(db, 'formFields'));
     const unsubFields = onSnapshot(qFields, (snap) => {
       const docs = snap.docs.map(d => ({ id: d.id, ...d.data() } as FormField));
       setFields(docs.sort((a,b) => a.order - b.order));
-    }, (err) => console.warn('FormFields listener error:', err));
+    }, (err) => console.warn('FormFields listener note:', err));
 
     // 3. Records listener
     const qRecords = query(collection(db, 'records'));
     const unsubRecords = onSnapshot(qRecords, (snap) => {
       const docs = snap.docs.map(d => ({ id: d.id, ...d.data() } as RecordDoc));
       setRecords(docs);
-    }, (err) => console.warn('Records listener error:', err));
+    }, (err) => console.warn('Records listener note:', err));
 
     // 4. Drafts listener (for current user)
     const qDrafts = query(collection(db, 'drafts'), where('ownerUid', '==', currentUser.id));
     const unsubDrafts = onSnapshot(qDrafts, (snap) => {
       const docs = snap.docs.map(d => ({ id: d.id, ...d.data() } as DraftDoc));
       setDrafts(docs);
-    }, (err) => console.warn('Drafts listener error:', err));
+    }, (err) => console.warn('Drafts listener note:', err));
 
     return () => {
       unsubCollab();
@@ -146,7 +168,7 @@ export default function App() {
 
   // Logout handler
   const handleLogout = async () => {
-    await signOut(auth);
+    await logoutSession();
     setCurrentUser(null);
     setIsAdminOpen(false);
     setIsDraftsOpen(false);

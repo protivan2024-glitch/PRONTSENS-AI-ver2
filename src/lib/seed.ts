@@ -215,9 +215,6 @@ export const DEFAULT_COLLABORATORS: Omit<Collaborator, 'id'>[] = [
 ];
 
 export async function ensureSeedData() {
-  if (!auth.currentUser) {
-    return;
-  }
   try {
     // 1. Check formFields collection
     const fieldsSnap = await getDocs(collection(db, 'formFields'));
@@ -239,7 +236,7 @@ export async function ensureSeedData() {
       await batch.commit();
     }
   } catch (err: any) {
-    console.warn('Initial seed check skipped:', err?.message || err);
+    console.warn('Initial seed check note:', err?.message || err);
   }
 }
 

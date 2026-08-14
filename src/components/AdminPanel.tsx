@@ -5,11 +5,12 @@ import {
   collection, query, onSnapshot, doc, updateDoc, deleteDoc, setDoc, addDoc, getDocs 
 } from 'firebase/firestore';
 import { PERMANENT_ADMIN_EMAIL, restoreDefaultFormFields } from '../lib/seed';
+import { hashPassword } from '../lib/authService';
 import { generateRecordPdf } from '../lib/pdfGenerator';
 import { exportRecordsToCsv } from '../lib/csvExporter';
 import { 
   Users, UserCheck, Shield, FormInput, FileText, Activity, Search, Trash2, 
-  Download, Eye, Plus, Edit2, RotateCcw, CheckCircle, XCircle, AlertTriangle, Key, X, Lock
+  Download, Eye, Plus, Edit2, RotateCcw, CheckCircle, XCircle, AlertTriangle, Key, X, Lock, KeyRound
 } from 'lucide-react';
 
 interface AdminPanelProps {
@@ -46,6 +47,20 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ currentUser, onClose }) 
   // Diagnostic state
   const [diagResult, setDiagResult] = useState<string | null>(null);
   const [diagLoading, setDiagLoading] = useState(false);
+
+  // Direct user registration state
+  const [showAddUserModal, setShowAddUserModal] = useState(false);
+  const [newUserName, setNewUserName] = useState('');
+  const [newUserEmail, setNewUserEmail] = useState('');
+  const [newUserCpf, setNewUserCpf] = useState('');
+  const [newUserRole, setNewUserRole] = useState<UserDoc['role']>('Limitado');
+  const [newUserPassword, setNewUserPassword] = useState('');
+  const [addUserLoading, setAddUserLoading] = useState(false);
+
+  // Password reset state
+  const [resettingUser, setResettingUser] = useState<UserDoc | null>(null);
+  const [newPasswordInput, setNewPasswordInput] = useState('');
+  const [resetLoading, setResetLoading] = useState(false);
 
   const isAdmin = currentUser.role === 'Administrador';
 
@@ -136,6 +151,72 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ currentUser, onClose }) 
       await updateDoc(doc(db, 'users', targetUser.id), { role: newRole });
     } catch (err) {
       console.error('Error updating role:', err);
+    }
+  };
+
+  const handleAddUserDirect = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newUserName.trim() || !newUserEmail.trim() || !newUserPassword.trim()) {
+      alert('Preencha os campos obrigatórios.');
+      return;
+    }
+    const cleanCpf = newUserCpf.replace(/\D/g, '');
+    const userId = cleanCpf.length === 11 ? 'u_' + cleanCpf : 'u_' + Date.now();
+    setAddUserLoading(true);
+
+    try {
+      const passHash = await hashPassword(newUserPassword);
+      const userRef = doc(db, 'users', userId);
+      const newUser: UserDoc = {
+        id: userId,
+        name: newUserName.trim(),
+        email: newUserEmail.trim().toLowerCase(),
+        cpf: cleanCpf,
+        passwordHash: passHash,
+        role: newUserRole,
+        status: 'approved',
+        isPermanentAdmin: false,
+        createdAt: Date.now(),
+        approvedAt: Date.now(),
+        approvedBy: currentUser.email,
+        authProvider: 'password'
+      };
+      await setDoc(userRef, newUser);
+      alert(`Usuário ${newUserName} criado e aprovado com sucesso!`);
+      setShowAddUserModal(false);
+      setNewUserName('');
+      setNewUserEmail('');
+      setNewUserCpf('');
+      setNewUserPassword('');
+    } catch (err: any) {
+      console.error('Error adding user direct:', err);
+      alert('Erro ao criar usuário: ' + (err.message || err));
+    } finally {
+      setAddUserLoading(false);
+    }
+  };
+
+  const handleResetUserPassword = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!resettingUser || !newPasswordInput.trim()) return;
+    if (newPasswordInput.length < 6) {
+      alert('A senha deve ter no mínimo 6 caracteres.');
+      return;
+    }
+    setResetLoading(true);
+    try {
+      const passHash = await hashPassword(newPasswordInput);
+      await updateDoc(doc(db, 'users', resettingUser.id), {
+        passwordHash: passHash
+      });
+      alert(`Senha do usuário ${resettingUser.name} alterada com sucesso!`);
+      setResettingUser(null);
+      setNewPasswordInput('');
+    } catch (err: any) {
+      console.error('Error resetting password:', err);
+      alert('Erro ao alterar senha: ' + (err.message || err));
+    } finally {
+      setResetLoading(false);
     }
   };
 
@@ -731,8 +812,19 @@ STATUS GERAL DO SISTEMA: 100% OPERACIONAL E SINCRONIZADO
 
               {/* Approved Users List */}
               <div className="bg-white rounded-xl border border-gray-200 overflow-hidden shadow-sm">
-                <div className="p-3 border-b border-gray-100 font-bold text-xs text-gray-700">
-                  Usuários Cadastrados na Plataforma ({users.length})
+                <div className="p-3 border-b border-gray-100 flex items-center justify-between">
+                  <span className="font-bold text-xs text-gray-700">
+                    Usuários Cadastrados na Plataforma ({users.length})
+                  </span>
+                  {isAdmin && (
+                    <button
+                      onClick={() => setShowAddUserModal(true)}
+                      className="px-3 py-1.5 bg-[#3F3F3F] hover:bg-[#2f2f2f] text-white text-xs font-bold rounded-lg transition-colors flex items-center gap-1 shadow-sm"
+                    >
+                      <Plus className="w-3.5 h-3.5" />
+                      Cadastrar Novo Usuário
+                    </button>
+                  )}
                 </div>
                 <div className="overflow-x-auto">
                   <table className="w-full text-left text-xs">
@@ -786,15 +878,27 @@ STATUS GERAL DO SISTEMA: 100% OPERACIONAL E SINCRONIZADO
                                 {u.status}
                               </span>
                             </td>
-                            <td className="p-3 text-right">
+                            <td className="p-3 text-right space-x-1">
                               {isAdmin && !isPermanent && (
-                                <button
-                                  onClick={() => handleRejectUser(u.id, u.email)}
-                                  className="p-1.5 text-red-600 hover:bg-red-50 rounded-lg"
-                                  title="Remover Acesso"
-                                >
-                                  <Trash2 className="w-4 h-4" />
-                                </button>
+                                <>
+                                  <button
+                                    onClick={() => {
+                                      setResettingUser(u);
+                                      setNewPasswordInput('');
+                                    }}
+                                    className="p-1.5 text-amber-600 hover:bg-amber-50 rounded-lg"
+                                    title="Alterar Senha do Usuário"
+                                  >
+                                    <KeyRound className="w-4 h-4" />
+                                  </button>
+                                  <button
+                                    onClick={() => handleRejectUser(u.id, u.email)}
+                                    className="p-1.5 text-red-600 hover:bg-red-50 rounded-lg"
+                                    title="Remover Acesso"
+                                  >
+                                    <Trash2 className="w-4 h-4" />
+                                  </button>
+                                </>
                               )}
                             </td>
                           </tr>
@@ -804,6 +908,156 @@ STATUS GERAL DO SISTEMA: 100% OPERACIONAL E SINCRONIZADO
                   </table>
                 </div>
               </div>
+
+              {/* Direct Add User Modal */}
+              {showAddUserModal && (
+                <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
+                  <div className="bg-white rounded-2xl p-6 max-w-md w-full shadow-2xl border border-gray-100 space-y-4">
+                    <div className="flex justify-between items-center border-b pb-3">
+                      <h3 className="font-bold text-sm text-gray-900 flex items-center gap-2">
+                        <Users className="w-4 h-4 text-[#3F3F3F]" />
+                        Cadastrar Novo Usuário
+                      </h3>
+                      <button onClick={() => setShowAddUserModal(false)} className="text-gray-400 hover:text-gray-600">
+                        <X className="w-4 h-4" />
+                      </button>
+                    </div>
+
+                    <form onSubmit={handleAddUserDirect} className="space-y-3 text-xs">
+                      <div>
+                        <label className="block font-semibold text-gray-700 mb-1">Nome Completo *</label>
+                        <input
+                          type="text"
+                          value={newUserName}
+                          onChange={(e) => setNewUserName(e.target.value)}
+                          placeholder="Ex: MARCOS DE SOUZA"
+                          required
+                          className="w-full p-2.5 bg-gray-50 border border-gray-300 rounded-xl outline-none focus:ring-2 focus:ring-[#3F3F3F]"
+                        />
+                      </div>
+
+                      <div>
+                        <label className="block font-semibold text-gray-700 mb-1">E-mail *</label>
+                        <input
+                          type="email"
+                          value={newUserEmail}
+                          onChange={(e) => setNewUserEmail(e.target.value)}
+                          placeholder="marcos@empresa.com"
+                          required
+                          className="w-full p-2.5 bg-gray-50 border border-gray-300 rounded-xl outline-none focus:ring-2 focus:ring-[#3F3F3F]"
+                        />
+                      </div>
+
+                      <div>
+                        <label className="block font-semibold text-gray-700 mb-1">CPF (11 dígitos)</label>
+                        <input
+                          type="text"
+                          value={newUserCpf}
+                          onChange={(e) => setNewUserCpf(e.target.value)}
+                          placeholder="000.000.000-00"
+                          className="w-full p-2.5 bg-gray-50 border border-gray-300 rounded-xl outline-none focus:ring-2 focus:ring-[#3F3F3F]"
+                        />
+                      </div>
+
+                      <div>
+                        <label className="block font-semibold text-gray-700 mb-1">Papel / Nível de Acesso</label>
+                        <select
+                          value={newUserRole}
+                          onChange={(e) => setNewUserRole(e.target.value as any)}
+                          className="w-full p-2.5 bg-gray-50 border border-gray-300 rounded-xl outline-none font-semibold"
+                        >
+                          <option value="Limitado">Limitado (Preenchimento de Formulários)</option>
+                          <option value="Supervisor">Supervisor (Visualização e Edição Técnica)</option>
+                          <option value="Administrador">Administrador (Controle Total)</option>
+                        </select>
+                      </div>
+
+                      <div>
+                        <label className="block font-semibold text-gray-700 mb-1">Senha Inicial *</label>
+                        <input
+                          type="password"
+                          value={newUserPassword}
+                          onChange={(e) => setNewUserPassword(e.target.value)}
+                          placeholder="Mínimo 6 caracteres"
+                          minLength={6}
+                          required
+                          className="w-full p-2.5 bg-gray-50 border border-gray-300 rounded-xl outline-none focus:ring-2 focus:ring-[#3F3F3F]"
+                        />
+                      </div>
+
+                      <div className="flex justify-end gap-2 pt-3 border-t">
+                        <button
+                          type="button"
+                          onClick={() => setShowAddUserModal(false)}
+                          className="px-4 py-2 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-xl font-bold transition-colors"
+                        >
+                          Cancelar
+                        </button>
+                        <button
+                          type="submit"
+                          disabled={addUserLoading}
+                          className="px-5 py-2 bg-[#3F3F3F] hover:bg-[#2f2f2f] text-white rounded-xl font-bold transition-colors shadow-md disabled:opacity-50"
+                        >
+                          {addUserLoading ? 'Cadastrando...' : 'Criar e Aprovar Usuário'}
+                        </button>
+                      </div>
+                    </form>
+                  </div>
+                </div>
+              )}
+
+              {/* Reset Password Modal */}
+              {resettingUser && (
+                <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
+                  <div className="bg-white rounded-2xl p-6 max-w-sm w-full shadow-2xl border border-gray-100 space-y-4">
+                    <div className="flex justify-between items-center border-b pb-3">
+                      <h3 className="font-bold text-sm text-gray-900 flex items-center gap-2">
+                        <KeyRound className="w-4 h-4 text-amber-600" />
+                        Alterar Senha do Usuário
+                      </h3>
+                      <button onClick={() => setResettingUser(null)} className="text-gray-400 hover:text-gray-600">
+                        <X className="w-4 h-4" />
+                      </button>
+                    </div>
+
+                    <form onSubmit={handleResetUserPassword} className="space-y-3 text-xs">
+                      <p className="text-gray-600">
+                        Definir nova senha de acesso para <strong>{resettingUser.name}</strong> ({resettingUser.email}):
+                      </p>
+
+                      <div>
+                        <label className="block font-semibold text-gray-700 mb-1">Nova Senha *</label>
+                        <input
+                          type="password"
+                          value={newPasswordInput}
+                          onChange={(e) => setNewPasswordInput(e.target.value)}
+                          placeholder="Mínimo 6 caracteres"
+                          minLength={6}
+                          required
+                          className="w-full p-2.5 bg-gray-50 border border-gray-300 rounded-xl outline-none focus:ring-2 focus:ring-[#3F3F3F]"
+                        />
+                      </div>
+
+                      <div className="flex justify-end gap-2 pt-3 border-t">
+                        <button
+                          type="button"
+                          onClick={() => setResettingUser(null)}
+                          className="px-4 py-2 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-xl font-bold transition-colors"
+                        >
+                          Cancelar
+                        </button>
+                        <button
+                          type="submit"
+                          disabled={resetLoading}
+                          className="px-5 py-2 bg-amber-600 hover:bg-amber-700 text-white rounded-xl font-bold transition-colors shadow-md disabled:opacity-50"
+                        >
+                          {resetLoading ? 'Salvando...' : 'Atualizar Senha'}
+                        </button>
+                      </div>
+                    </form>
+                  </div>
+                </div>
+              )}
 
             </div>
           )}

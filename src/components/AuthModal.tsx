@@ -1,17 +1,19 @@
 import React, { useState } from 'react';
-import { auth, googleProvider, db } from '../lib/firebase';
-import { signInWithEmailAndPassword, signInWithPopup, sendPasswordResetEmail, createUserWithEmailAndPassword, signOut } from 'firebase/auth';
-import { doc, setDoc, getDoc, collection, query, where, getDocs } from 'firebase/firestore';
 import { HseLogo } from './HseLogo';
-import { UserDoc } from '../types';
-import { PERMANENT_ADMIN_EMAIL, PERMANENT_ADMIN_PASSWORD } from '../lib/seed';
+import { 
+  loginWithCredentials, 
+  registerNewUser, 
+  loginWithGoogle 
+} from '../lib/authService';
+import { auth } from '../lib/firebase';
+import { sendPasswordResetEmail } from 'firebase/auth';
 import { Mail, Lock, User, CreditCard, LogIn, UserPlus, AlertCircle, CheckCircle2, KeyRound } from 'lucide-react';
 
 interface AuthModalProps {
   onSuccess?: () => void;
 }
 
-export const AuthModal: React.FC<AuthModalProps> = () => {
+export const AuthModal: React.FC<AuthModalProps> = ({ onSuccess }) => {
   const [tab, setTab] = useState<'login' | 'register'>('login');
   
   // Login form state
@@ -40,7 +42,6 @@ export const AuthModal: React.FC<AuthModalProps> = () => {
 
   const handleIdentifierChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const val = e.target.value;
-    // Check if user is typing only digits
     if (/^\d+$/.test(val.replace(/[.-]/g, ''))) {
       setIdentifier(formatCpf(val));
     } else {
@@ -52,99 +53,35 @@ export const AuthModal: React.FC<AuthModalProps> = () => {
     setRegCpf(formatCpf(e.target.value));
   };
 
-  // Helper to resolve email from CPF if needed
-  const resolveEmailFromIdentifier = async (idVal: string): Promise<string> => {
-    const cleanDigits = idVal.replace(/\D/g, '');
-    if (cleanDigits.length === 11 && !idVal.includes('@')) {
-      // It's a CPF
-      const q = query(collection(db, 'users'), where('cpf', '==', cleanDigits));
-      const snap = await getDocs(q);
-      if (!snap.empty) {
-        const u = snap.docs[0].data() as UserDoc;
-        return u.email;
-      } else {
-        throw new Error('CPF não encontrado no sistema.');
-      }
-    }
-    return idVal.trim();
-  };
-
   // Login handler
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMsg(null);
     setInfoMsg(null);
+
+    if (!identifier.trim()) {
+      setErrorMsg('Por favor, informe seu E-mail ou CPF.');
+      return;
+    }
+    if (!loginPassword) {
+      setErrorMsg('Por favor, digite sua senha.');
+      return;
+    }
+
     setLoading(true);
 
     try {
-      const emailToUse = await resolveEmailFromIdentifier(identifier);
-      const isPermAdmin = emailToUse.toLowerCase() === PERMANENT_ADMIN_EMAIL.toLowerCase();
-
-      let uid = '';
-      try {
-        const cred = await signInWithEmailAndPassword(auth, emailToUse, loginPassword);
-        uid = cred.user.uid;
-      } catch (authErr: any) {
-        console.warn('Primary signInWithEmailAndPassword note:', authErr?.code || authErr);
-
-        if (isPermAdmin && loginPassword === PERMANENT_ADMIN_PASSWORD) {
-          try {
-            const newCred = await createUserWithEmailAndPassword(auth, emailToUse, loginPassword);
-            uid = newCred.user.uid;
-          } catch (createErr: any) {
-            console.warn('Permanent admin create account note:', createErr?.code || createErr);
-            throw authErr;
-          }
-        } else {
-          throw authErr;
-        }
+      const res = await loginWithCredentials(identifier, loginPassword);
+      if (res.success) {
+        if (onSuccess) onSuccess();
+      } else if (res.info) {
+        setInfoMsg(res.info);
+      } else if (res.error) {
+        setErrorMsg(res.error);
       }
-
-      // Check user doc status in Firestore
-      const userRef = doc(db, 'users', uid);
-      let userSnap = await getDoc(userRef);
-
-      if (!userSnap.exists() || isPermAdmin) {
-        if (isPermAdmin) {
-          const permDoc: UserDoc = {
-            id: uid,
-            name: 'Administrador HSE',
-            email: PERMANENT_ADMIN_EMAIL,
-            cpf: '00000000000',
-            role: 'Administrador',
-            status: 'approved',
-            isPermanentAdmin: true,
-            createdAt: Date.now(),
-            approvedAt: Date.now(),
-            approvedBy: 'system',
-            authProvider: 'password'
-          };
-          await setDoc(userRef, permDoc, { merge: true });
-          userSnap = await getDoc(userRef);
-        } else if (!userSnap.exists()) {
-          await signOut(auth);
-          throw new Error('Usuário sem documento de perfil. Entre em contato com o administrador.');
-        }
-      }
-
-      const userData = userSnap.data() as UserDoc;
-      if (userData.status !== 'approved') {
-        await signOut(auth);
-        setInfoMsg('Seu cadastro foi recebido e está aguardando aprovação do Administrador.');
-        return;
-      }
-
     } catch (err: any) {
       console.error('Login error:', err);
-      let msg = err.message || 'Erro ao realizar login. Verifique suas credenciais.';
-      if (err.code === 'auth/invalid-credential' || err.code === 'auth/user-not-found' || err.code === 'auth/wrong-password') {
-        msg = 'E-mail, CPF ou senha incorretos.';
-      } else if (err.code === 'auth/operation-not-allowed') {
-        msg = 'O método de login por E-mail/Senha precisa ser ativado no Firebase Console -> Authentication -> Sign-in method.';
-      } else if (err.code === 'auth/admin-restricted-operation') {
-        msg = 'Operação restrita pelo provedor. Verifique as configurações no Firebase Console.';
-      }
-      setErrorMsg(msg);
+      setErrorMsg(err.message || 'Erro ao realizar login. Verifique sua conexão.');
     } finally {
       setLoading(false);
     }
@@ -157,56 +94,17 @@ export const AuthModal: React.FC<AuthModalProps> = () => {
     setLoading(true);
 
     try {
-      const res = await signInWithPopup(auth, googleProvider);
-      const user = res.user;
-      const uid = user.uid;
-      const email = user.email || '';
-
-      const isPerm = email.toLowerCase() === PERMANENT_ADMIN_EMAIL.toLowerCase();
-
-      const userRef = doc(db, 'users', uid);
-      let userSnap = await getDoc(userRef);
-
-      if (!userSnap.exists() || isPerm) {
-        const newUserDoc: UserDoc = {
-          id: uid,
-          name: isPerm ? 'Administrador HSE' : (user?.displayName || 'Usuário Google'),
-          email: email || PERMANENT_ADMIN_EMAIL,
-          cpf: '',
-          role: isPerm ? 'Administrador' : 'Limitado',
-          status: isPerm ? 'approved' : 'pending',
-          isPermanentAdmin: isPerm,
-          createdAt: Date.now(),
-          authProvider: 'google'
-        };
-
-        await setDoc(userRef, newUserDoc, { merge: true });
-        userSnap = await getDoc(userRef);
-
-        if (!isPerm) {
-          await signOut(auth);
-          setInfoMsg('Seu cadastro via Google foi recebido e está aguardando aprovação do Administrador.');
-          return;
-        }
-      } else {
-        const userData = userSnap.data() as UserDoc;
-        if (userData.status !== 'approved') {
-          await signOut(auth);
-          setInfoMsg('Seu cadastro via Google está aguardando aprovação do Administrador.');
-          return;
-        }
+      const res = await loginWithGoogle();
+      if (res.success) {
+        if (onSuccess) onSuccess();
+      } else if (res.info) {
+        setInfoMsg(res.info);
+      } else if (res.error) {
+        setErrorMsg(res.error);
       }
     } catch (err: any) {
       console.error('Google Auth Error:', err);
-      let msg = err.message || 'Erro ao autenticar com o Google.';
-      if (err.code === 'auth/operation-not-allowed') {
-        msg = 'O provedor Google precisa ser ativado no Firebase Console -> Authentication -> Sign-in method.';
-      } else if (err.code === 'auth/popup-closed-by-user') {
-        msg = 'A janela de autenticação do Google foi fechada.';
-      } else if (err.code === 'auth/admin-restricted-operation') {
-        msg = 'Operação restrita pelo Firebase. Ative a autenticação Google em Firebase Console -> Authentication.';
-      }
-      setErrorMsg(msg);
+      setErrorMsg(err.message || 'Erro ao autenticar com o Google.');
     } finally {
       setLoading(false);
     }
@@ -218,81 +116,40 @@ export const AuthModal: React.FC<AuthModalProps> = () => {
     setErrorMsg(null);
     setInfoMsg(null);
 
-    const cleanCpf = regCpf.replace(/\D/g, '');
-    if (cleanCpf.length !== 11) {
-      setErrorMsg('Informe um CPF válido com 11 dígitos.');
-      return;
-    }
-
-    if (regPassword.length < 6) {
-      setErrorMsg('A senha deve conter no mínimo 6 caracteres.');
-      return;
-    }
-
     setLoading(true);
 
     try {
-      // Check if CPF already exists in Firestore
-      const cpfQuery = query(collection(db, 'users'), where('cpf', '==', cleanCpf));
-      const cpfSnap = await getDocs(cpfQuery);
-      if (!cpfSnap.empty) {
-        throw new Error('Este CPF já está cadastrado no sistema.');
-      }
-
-      const isPerm = regEmail.trim().toLowerCase() === PERMANENT_ADMIN_EMAIL.toLowerCase();
-
-      const cred = await createUserWithEmailAndPassword(auth, regEmail.trim(), regPassword);
-      const uid = cred.user.uid;
-
-      const newUserDoc: UserDoc = {
-        id: uid,
-        name: regName.trim(),
-        email: regEmail.trim(),
-        cpf: cleanCpf,
-        role: isPerm ? 'Administrador' : 'Limitado',
-        status: isPerm ? 'approved' : 'pending',
-        isPermanentAdmin: isPerm,
-        createdAt: Date.now(),
-        authProvider: 'password'
-      };
-
-      await setDoc(doc(db, 'users', uid), newUserDoc);
-
-      if (!isPerm) {
-        await signOut(auth);
-        setInfoMsg('Seu cadastro foi recebido com sucesso e está aguardando aprovação do Administrador.');
+      const res = await registerNewUser(regName, regEmail, regCpf, regPassword);
+      if (res.success) {
+        setInfoMsg(res.message || 'Cadastro realizado com sucesso! Aguarde a aprovação do Administrador.');
         setTab('login');
+        setRegName('');
+        setRegEmail('');
+        setRegCpf('');
+        setRegPassword('');
       } else {
-        setInfoMsg('Conta de Administrador Permanente registrada e aprovada com sucesso!');
+        setErrorMsg(res.error || 'Erro ao realizar cadastro.');
       }
     } catch (err: any) {
       console.error('Registration Error:', err);
-      let msg = err.message || 'Erro ao realizar cadastro.';
-      if (err.code === 'auth/email-already-in-use') {
-        msg = 'Este e-mail já está em uso por outra conta.';
-      } else if (err.code === 'auth/operation-not-allowed') {
-        msg = 'O método de autocadastro por E-mail/Senha precisa ser ativado no Firebase Console -> Authentication -> Sign-in method.';
-      }
-      setErrorMsg(msg);
+      setErrorMsg(err.message || 'Erro ao realizar cadastro.');
     } finally {
       setLoading(false);
     }
   };
 
-
   // Password reset
   const handleForgotPassword = async () => {
-    if (!identifier) {
-      setErrorMsg('Digite seu E-mail no campo de identificação para redefinir a senha.');
+    if (!identifier || !identifier.includes('@')) {
+      setErrorMsg('Digite seu endereço de E-mail completo no campo acima para redefinir sua senha.');
       return;
     }
 
     try {
-      const email = await resolveEmailFromIdentifier(identifier);
-      await sendPasswordResetEmail(auth, email);
-      setInfoMsg(`E-mail de redefinição enviado para ${email}. Verifique sua caixa de entrada.`);
+      await sendPasswordResetEmail(auth, identifier.trim());
+      setInfoMsg(`Instruções de redefinição de senha enviadas para ${identifier.trim()}. Verifique sua caixa de entrada.`);
     } catch (err: any) {
-      setErrorMsg('Erro ao enviar e-mail de redefinição. Verifique se o e-mail ou CPF está correto.');
+      setErrorMsg('Caso este e-mail esteja cadastrado, você receberá instruções de redefinição.');
     }
   };
 
@@ -312,6 +169,7 @@ export const AuthModal: React.FC<AuthModalProps> = () => {
         {/* Tab Selection */}
         <div className="flex border-b border-gray-200 bg-gray-50/50">
           <button
+            type="button"
             onClick={() => { setTab('login'); setErrorMsg(null); setInfoMsg(null); }}
             className={`flex-1 py-3 text-sm font-semibold transition-colors flex items-center justify-center gap-2 border-b-2 ${
               tab === 'login'
@@ -324,6 +182,7 @@ export const AuthModal: React.FC<AuthModalProps> = () => {
           </button>
 
           <button
+            type="button"
             onClick={() => { setTab('register'); setErrorMsg(null); setInfoMsg(null); }}
             className={`flex-1 py-3 text-sm font-semibold transition-colors flex items-center justify-center gap-2 border-b-2 ${
               tab === 'register'
