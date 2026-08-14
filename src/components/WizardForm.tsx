@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef, useLayoutEffect } from 'react';
 import { FormField, Collaborator, DraftDoc, RecordDoc, RecordStatus } from '../types';
 import { PhotoCapture } from './PhotoCapture';
 import { collection, addDoc, doc, deleteDoc, updateDoc } from 'firebase/firestore';
@@ -32,6 +32,8 @@ export const WizardForm: React.FC<WizardFormProps> = ({
   onOpenDraftsModal,
 }) => {
   const [currentStep, setCurrentStep] = useState<number>(1);
+  const prevStepRef = useRef<number>(1);
+  const formTopRef = useRef<HTMLDivElement>(null);
   const [answers, setAnswers] = useState<Record<string, any>>({});
   const [photoUrls, setPhotoUrls] = useState<Record<string, string>>({});
   const [hasRestoredLocalCache, setHasRestoredLocalCache] = useState(false);
@@ -313,10 +315,43 @@ export const WizardForm: React.FC<WizardFormProps> = ({
     return true;
   };
 
+  const scrollToTop = () => {
+    // 1. Direct window scroll to top
+    if (typeof window !== 'undefined') {
+      window.scrollTo(0, 0);
+    }
+    // 2. Document element / body scroll reset (for mobile browsers / iframe wrappers)
+    if (document.documentElement) {
+      document.documentElement.scrollTop = 0;
+    }
+    if (document.body) {
+      document.body.scrollTop = 0;
+    }
+    // 3. Scroll container ref into view
+    if (formTopRef.current) {
+      formTopRef.current.scrollIntoView({ behavior: 'auto', block: 'start' });
+    }
+  };
+
+  // Scroll to top automatically when advancing step
+  useLayoutEffect(() => {
+    if (currentStep > prevStepRef.current) {
+      scrollToTop();
+      // Second tick after layout mount to guarantee 0 scroll on mobile rendering
+      requestAnimationFrame(() => {
+        scrollToTop();
+      });
+    }
+    prevStepRef.current = currentStep;
+  }, [currentStep]);
+
   const handleNextStep = () => {
     if (validateStep(currentStep)) {
+      scrollToTop();
       setCurrentStep((prev) => Math.min(prev + 1, 4));
-      window.scrollTo({ top: 0, behavior: 'smooth' });
+      requestAnimationFrame(() => {
+        scrollToTop();
+      });
     }
   };
 
@@ -484,7 +519,7 @@ export const WizardForm: React.FC<WizardFormProps> = ({
   const activeCollaborators = collaborators.filter(c => c.active);
 
   return (
-    <div className="max-w-4xl mx-auto px-4 py-6">
+    <div ref={formTopRef} className="max-w-4xl mx-auto px-4 py-6">
       
       {/* Restored Cache Alert Banner */}
       {hasRestoredLocalCache && !activeDraft && (
